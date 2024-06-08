@@ -1,0 +1,4 @@
+pylsl==1.13.6
+opencv-python==4.10.0
+matplotlib==3.9.0
+git+https://github.com/qualisys/qualisys_python_sdk.git@v2.1.1#egg=qtm
