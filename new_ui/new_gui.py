@@ -23,6 +23,9 @@ class App(tk.Frame):
         self.picking_phase = PickingPhase.BABY_POSITION
         self.baby_and_mother_idxs = [None, None]
         self.parent_directory = 'C:\\Users\\QTM\\Desktop\\motion_capture_data'
+        self.recording = False
+        self.cap = None
+        self.video_recorder = None
         self.create_layout()
 
     def choose_folder(self):
@@ -152,7 +155,7 @@ class App(tk.Frame):
             self.canvas.config(cursor='')
    
     def circle_clicked(self, event):
-        circle_id = event.widget.find_closest(event.x, event.y + 200)[0]
+        circle_id = event.widget.find_closest(event.x, event.y + 200)[0] # Adding 200 since we're cropping the top 200px of the canvas, but the circles are technically still drawn at the original canvas coordinates.
         circle_index = self.circle_ids.index(circle_id)
         self.baby_and_mother_idxs[self.picking_phase.value] = circle_index
         self.picking_phase = PickingPhase(self.picking_phase.value + 1)
@@ -193,13 +196,30 @@ class App(tk.Frame):
         self.cancel_button.grid_remove()
         self.start_recording_button.grid_remove()
         self.draw_position_picker()
-        
+    
+    def get_baby_angle(self):
+        idx_to_angle = ['-90', '-45', '0', '45', '90']
+        return idx_to_angle[self.baby_and_mother_idxs[0]]
+    
+    def get_mother_side(self):
+        return 'right' if self.baby_and_mother_idxs[1] == 5 else 'left'
+
+
     def start_recording(self):
         self.participant_name_entry.config(state='readonly')
         self.degree_entry.config(state='readonly')
         self.folder_button.config(state='disabled')
+
         self.phase_description.set("Recording In Progress")
-        self.target_folder = f"{self.parent_directory.get()}\\{datetime.now().strftime('%Y-%m-%d')}_{self.participant_name.get()}"
+        self.target_folder = f"{self.parent_directory.get()}\\{datetime.now().strftime('%Y-%m-%d')}_{self.participant_name.get()}\\"
+        self.target_filename = f"trial_{self.trial_number}_babyAngle_{self.get_baby_angle()}_motherSide_{self.get_mother_side()}"
+
+        frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        self.video_recorder = cv2.VideoWriter(self.target_folder+self.target_filename+'.mp4', fourcc, 20.0, (frame_width, frame_height))
+        self.recording = True
+
         if not os.path.exists(self.target_folder):
             os.makedirs(self.target_folder)
         self.cancel_button.grid_remove()
@@ -212,7 +232,12 @@ class App(tk.Frame):
         self.stop_recording_button.grid_remove()
         self.continue_trial_button = tk.Button(self.interactive_frame, text="No, this was a bad trial. Record over it.", bg="darkred", fg="white", command=self.record_over_trial)
         self.continue_trial_button.grid(row=4, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
-        
+
+        self.recording = False
+        if self.video_recorder:
+            self.video_recorder.release()
+            self.video_recorder = None
+
         self.record_over_trial_button = tk.Button(self.interactive_frame, text="Yes, go to the next trial.", bg="darkgreen", fg="white", command=self.goto_new_trial)
         self.record_over_trial_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
     
@@ -238,10 +263,10 @@ class App(tk.Frame):
         self.start_recording_button.grid(row=4, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
 
     def capture_camera(self):
-        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 
         def update_feed():
-            ret, frame = cap.read()
+            ret, frame = self.cap.read()
             if ret:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 
@@ -254,6 +279,10 @@ class App(tk.Frame):
                 else:
                     new_width = self.canvas_width
                     new_height = int(self.canvas_width / aspect_ratio)
+
+                if self.recording:
+                    writing_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+                    self.video_recorder.write(writing_frame)
 
                 frame = cv2.resize(frame, (new_width, new_height))
                 image = Image.fromarray(frame)
