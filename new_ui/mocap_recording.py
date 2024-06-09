@@ -14,7 +14,7 @@ from pylsl import StreamInfo, StreamOutlet
 import qtm
 from qtm import QRTEvent
 
-from new_ui.config import (
+from config import (
     Config,
     new_lsl_stream_info,
     parse_qtm_parameters,
@@ -31,7 +31,7 @@ class State(Enum):
     STREAMING = 3
     STOPPED = 4
 
-class Link:
+class MocapRecorder:
     def __init__(self, host, port, on_state_changed, on_error, starting_yaw):
         self.host = host
         self.port = port
@@ -40,6 +40,7 @@ class Link:
         self.starting_yaw = starting_yaw
         self.samples = []
         self.timestamps = []
+        self.periodic_thread = None
 
         self.state = State.INITIAL
         self.conn = None
@@ -137,8 +138,9 @@ class Link:
 
             if self.conn and self.conn.has_transport():
                 self.conn.disconnect()
-            
-            self.periodic_thread.join()
+
+            if self.periodic_thread:
+                self.periodic_thread.join()
 
             LOG.debug("link: shutdown enter")
             self.conn = None
@@ -292,7 +294,7 @@ async def init(
     starting_yaw=None
 ):
     LOG.debug("link: init enter")
-    link = Link(qtm_host, qtm_port, on_state_changed, on_error, starting_yaw)
+    link = MocapRecorder(qtm_host, qtm_port, on_state_changed, on_error, starting_yaw)
     try:
         link.conn = await qtm.connect(
             host=qtm_host,
@@ -303,7 +305,7 @@ async def init(
         )
         if link.conn is None:
             msg = ("Failed to connect to QTM "
-                "on '{}:{}' with protocol version '{}'") \
+                "on '{}:{}' with protocol version '{}'. Please try again.") \
                 .format(qtm_host, qtm_port, qtm_version)
             LOG.error(msg)
             raise LinkError(msg)

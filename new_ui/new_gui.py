@@ -1,10 +1,17 @@
 import tkinter as tk
 from tkinter import filedialog
+from tkinter import messagebox
 import cv2
 from PIL import Image, ImageTk
 from enum import Enum
 import os
 from datetime import datetime
+import asyncio
+import logging
+
+import mocap_recording as mocap_recording
+
+LOG = logging.getLogger("qlsl")
 
 class PickingPhase(Enum):
     BABY_POSITION = 0
@@ -12,9 +19,11 @@ class PickingPhase(Enum):
     CONFIRM = 2
 
 class App(tk.Frame):
-    def __init__(self, master=None):
+    def __init__(self, master=None, async_loop=None):
         super().__init__(master)
         self.master = master
+        self.async_loop = async_loop
+        self.master.title("Motion Capture Recording")
         self.grid(sticky="nsew")
         self.canvas_width = 800
         self.canvas_height = 800
@@ -26,7 +35,26 @@ class App(tk.Frame):
         self.recording = False
         self.cap = None
         self.video_recorder = None
+        self.mocap_recorder = None
         self.create_layout()
+
+    async def stop_main_loop(self):
+        self.async_loop.stop()
+        self.master.destroy()
+        LOG.debug("gui: stop_async_loop")
+    
+    def main_loop(self):
+        asyncio.ensure_future(self.updater())
+        self.async_loop.run_forever()
+
+    async def updater(self, interval=1/20):
+        try:
+            LOG.debug("gui: updater enter")
+            while True:
+                self.update()
+                await asyncio.sleep(interval)
+        finally:
+            LOG.debug("gui: updater exit")
 
     def choose_folder(self):
         folder_path = filedialog.askdirectory()
@@ -74,7 +102,21 @@ class App(tk.Frame):
 
         self.label_unit = tk.Label(settings_frame, text=" degrees")
         self.label_unit.grid(row=row_number, column=1, sticky='e')
+        # -----------------------------------------------------------------------------------------------------
+        mocap_status_frame = tk.Frame(self)
+        mocap_status_frame.grid(row=0, column=1, columnspan=2, rowspan=3, sticky="nsew", padx=10, pady=10)
         
+        self.mocap_recording_status = tk.StringVar(value="")
+        self.mocap_recording_status_label = tk.Label(mocap_status_frame, textvariable=self.mocap_recording_status)
+        self.mocap_recording_status_label.grid(row=0, column=0, sticky='w')
+
+        self.mocap_packet_number = tk.StringVar(value="")
+        self.mocap_packet_number_label = tk.Label(mocap_status_frame,  textvariable=self.mocap_packet_number)
+        self.mocap_packet_number_label.grid(row=1, column=0, sticky='w')
+
+        self.mocap_elapsed_time = tk.StringVar(value="")
+        self.mocap_elapsed_time_label = tk.Label(mocap_status_frame, textvariable=self.mocap_elapsed_time)
+        self.mocap_elapsed_time_label.grid(row=2, column=0, sticky='w')
         # -----------------------------------------------------------------------------------------------------
         self.interactive_frame = tk.Frame(self)
         self.interactive_frame.grid(row=row_number, rowspan=4, column=0, sticky="nsew")
@@ -214,10 +256,14 @@ class App(tk.Frame):
         self.target_folder = f"{self.parent_directory.get()}\\{datetime.now().strftime('%Y-%m-%d')}_{self.participant_name.get()}\\"
         self.target_filename = f"trial_{self.trial_number}_babyAngle_{self.get_baby_angle()}_motherSide_{self.get_mother_side()}"
 
+        # Video recording
         frame_width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
         self.video_recorder = cv2.VideoWriter(self.target_folder+self.target_filename+'.mp4', fourcc, 20.0, (frame_width, frame_height))
+
+        # Mocap recording
+        self.started_mocap_recording = asyncio.ensure_future(self.start_mocap_recording())
         self.recording = True
 
         if not os.path.exists(self.target_folder):
@@ -227,7 +273,54 @@ class App(tk.Frame):
         self.stop_recording_button = tk.Button(self.interactive_frame, text="STOP RECORDING", bg="darkred", fg="white", command=self.stop_recording)
         self.stop_recording_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
 
+    async def start_mocap_recording(self, host_ip='127.0.0.1', port='22223'):
+        try:
+            err_msg = None
+            self.mocap_recording_status.set("Connecting to Motion Capture software") 
+            self.mocap_recorder = await mocap_recording.init(
+                qtm_host=host_ip,
+                qtm_port=port,
+                qtm_version=mocap_recording.QTM_DEFAULT_VERSION,
+                on_state_changed=self.mocap_state_update,
+                on_error=self.on_error,
+                starting_yaw=int(self.get_baby_angle())
+            )
+        except asyncio.CancelledError:
+            self.mocap_recorder = None
+            LOG.error("Start attempt canceled")
+        except mocap_recording.LinkError as err:
+            self.mocap_recorder = None
+            err_msg = str(err)
+        except Exception as ex:
+            self.mocap_recorder = None
+            LOG.error("gui: do_async_start exception: " + repr(ex))
+            err_msg = ("An internal error occurred. "
+                "See log messages for details.")
+            raise
+        finally:
+            if not self.mocap_recorder:
+                self.mocap_recording_status.set("Streaming Start Failed. Please try again.")
+                if err_msg:
+                    self.on_error(err_msg)
+            self.started_mocap_recording = None
+
+    def on_error(self, msg):
+        messagebox.showerror("Error", msg)
+
+    def mocap_state_update(self, new_state):
+        if new_state == mocap_recording.State.INITIAL:
+            self.mocap_recording_status.set("")
+            self.mocap_elapsed_time.set("")
+            self.mocap_packet_number.set("")
+        elif new_state == mocap_recording.State.WAITING:
+            self.mocap_recording_status.set("Waiting on Motion Capture software")
+        elif new_state == mocap_recording.State.STREAMING:
+            self.mocap_recording_status.set("Streaming")
+        elif new_state == mocap_recording.State.STOPPED:
+            self.mocap_recording_status.set("Stopped")
+            
     def stop_recording(self):
+        self.degree_entry.config(state='normal')
         self.phase_description.set("Do you want to keep this trial or record over it?")
         self.stop_recording_button.grid_remove()
         self.continue_trial_button = tk.Button(self.interactive_frame, text="No, this was a bad trial. Record over it.", bg="darkred", fg="white", command=self.record_over_trial)
@@ -298,9 +391,11 @@ class App(tk.Frame):
 
 def main():
     root = tk.Tk()
-    root.title("Motion Capture Recording")
-    app = App(master=root)
-    app.mainloop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    app = App(master=root, async_loop=loop)
+    app.main_loop()
+    loop.close()
 
 if __name__ == "__main__":
     main()
