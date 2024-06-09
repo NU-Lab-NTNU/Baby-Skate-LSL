@@ -24,6 +24,7 @@ class App(tk.Frame):
         self.master = master
         self.async_loop = async_loop
         self.master.title("Motion Capture Recording")
+        self.master.protocol("WM_DELETE_WINDOW", self.close)
         self.grid(sticky="nsew")
         self.canvas_width = 800
         self.canvas_height = 800
@@ -38,14 +39,20 @@ class App(tk.Frame):
         self.mocap_recorder = None
         self.create_layout()
 
+    def main_loop(self):
+        asyncio.ensure_future(self.updater())
+        self.async_loop.run_forever()
+
     async def stop_main_loop(self):
         self.async_loop.stop()
         self.master.destroy()
         LOG.debug("gui: stop_async_loop")
-    
-    def main_loop(self):
-        asyncio.ensure_future(self.updater())
-        self.async_loop.run_forever()
+
+    def close(self):
+        tasks = asyncio.all_tasks()
+        for task in tasks:
+            task.cancel()
+        asyncio.ensure_future(self.stop_async_loop())
 
     async def updater(self, interval=1/20):
         try:
@@ -246,7 +253,6 @@ class App(tk.Frame):
     def get_mother_side(self):
         return 'right' if self.baby_and_mother_idxs[1] == 5 else 'left'
 
-
     def start_recording(self):
         self.participant_name_entry.config(state='readonly')
         self.degree_entry.config(state='readonly')
@@ -263,7 +269,7 @@ class App(tk.Frame):
         self.video_recorder = cv2.VideoWriter(self.target_folder+self.target_filename+'.mp4', fourcc, 20.0, (frame_width, frame_height))
 
         # Mocap recording
-        self.started_mocap_recording = asyncio.ensure_future(self.start_mocap_recording())
+        self.started_mocap_recording = asyncio.ensure_future(self._start_mocap_recording())
         self.recording = True
 
         if not os.path.exists(self.target_folder):
@@ -273,7 +279,7 @@ class App(tk.Frame):
         self.stop_recording_button = tk.Button(self.interactive_frame, text="STOP RECORDING", bg="darkred", fg="white", command=self.stop_recording)
         self.stop_recording_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
 
-    async def start_mocap_recording(self, host_ip='127.0.0.1', port='22223'):
+    async def _start_mocap_recording(self, host_ip='127.0.0.1', port='22223'):
         try:
             err_msg = None
             self.mocap_recording_status.set("Connecting to Motion Capture software") 
@@ -330,6 +336,8 @@ class App(tk.Frame):
         if self.video_recorder:
             self.video_recorder.release()
             self.video_recorder = None
+        
+        asyncio.ensure_future(self.mocap_recorder.shutdown(self.target_folder + self.target_filename + '.xlsx'))
 
         self.record_over_trial_button = tk.Button(self.interactive_frame, text="Yes, go to the next trial.", bg="darkgreen", fg="white", command=self.goto_new_trial)
         self.record_over_trial_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
