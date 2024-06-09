@@ -90,8 +90,6 @@ class App(tk.Frame):
             formatted_count = str(packet_count)
         return formatted_count
         
-
-
     def choose_folder(self):
         folder_path = filedialog.askdirectory()
         if folder_path:
@@ -289,6 +287,14 @@ class App(tk.Frame):
 
         self.phase_description.set("Recording In Progress")
         self.target_folder = f"{self.parent_directory.get()}\\{datetime.now().strftime('%Y-%m-%d')}_{self.participant_name.get()}\\"
+        num_of_files_in_folder = len(os.listdir(self.target_folder))
+        # If for some reason the program was restarted after a few trials have been recorded,
+        # we want the trial number to continue from where it stopped, not reset back to 1,
+        # given that we don't want the experimenters to think about accidentally overwriting
+        # the data (just quality of life things)
+        if num_of_files_in_folder != 0:
+            self.trial_number = int(num_of_files_in_folder / 2) + 1 # Dividing by 2 since we save video files as well
+        self.trial_number_str.set(f"Trial Number: {self.trial_number}")
         self.target_filename = f"trial_{self.trial_number}_babyAngle_{self.get_baby_angle()}_motherSide_{self.get_mother_side()}"
 
         # Video recording
@@ -321,12 +327,10 @@ class App(tk.Frame):
                 starting_yaw=int(self.get_baby_angle())
             )
         except asyncio.CancelledError:
-            self.mocap_recorder = None
             LOG.error("Start attempt canceled")
         except mocap_recording.LinkError as err:
             err_msg = str(err)
         except Exception as ex:
-            self.mocap_recorder = None
             LOG.error("gui: do_async_start exception: " + repr(ex))
             err_msg = ("An internal error occurred. "
                 "See log messages for details.")
@@ -340,6 +344,7 @@ class App(tk.Frame):
 
     def on_error(self, msg):
         messagebox.showerror("Error", msg)
+        self.stop_recording()
 
     def mocap_state_update(self, new_state):
         if new_state == mocap_recording.State.INITIAL:
@@ -360,21 +365,22 @@ class App(tk.Frame):
         self.continue_trial_button = tk.Button(self.interactive_frame, text="No, this was a bad trial. Record over it.", bg="darkred", fg="white", command=self.record_over_trial)
         self.continue_trial_button.grid(row=4, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
 
+        self.record_over_trial_button = tk.Button(self.interactive_frame, text="Yes, go to the next trial.", bg="darkgreen", fg="white", command=self.goto_new_trial)
+        self.record_over_trial_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
+
         self.recording = False
         if self.video_recorder:
             self.video_recorder.release()
             self.video_recorder = None
         
-        asyncio.ensure_future(self.mocap_recorder.shutdown(self.target_folder + self.target_filename + '.xlsx'))
-
-        self.record_over_trial_button = tk.Button(self.interactive_frame, text="Yes, go to the next trial.", bg="darkgreen", fg="white", command=self.goto_new_trial)
-        self.record_over_trial_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
+        if self.mocap_recorder:
+            asyncio.ensure_future(self.mocap_recorder.shutdown(self.target_folder + self.target_filename + '.xlsx'))
     
     def goto_new_trial(self):
         self.continue_trial_button.grid_remove()
         self.record_over_trial_button.grid_remove()
         self.trial_number += 1
-        self.trial_number_str.set(f"Trial number: {self.trial_number}")
+        self.trial_number_str.set(f"Trial Number: {self.trial_number}")
         self.picking_phase = PickingPhase.BABY_POSITION
         self.phase_description.set("Click on the circle corresponding to where the baby is pointing")
         self.baby_and_mother_idxs = [None, None]
