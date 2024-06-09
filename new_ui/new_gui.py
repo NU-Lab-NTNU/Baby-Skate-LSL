@@ -8,6 +8,7 @@ import os
 from datetime import datetime
 import asyncio
 import logging
+import time
 
 import mocap_recording as mocap_recording
 
@@ -46,22 +47,50 @@ class App(tk.Frame):
     async def stop_main_loop(self):
         self.async_loop.stop()
         self.master.destroy()
-        LOG.debug("gui: stop_async_loop")
+        LOG.debug("gui: stop_main_loop")
 
     def close(self):
         tasks = asyncio.all_tasks()
         for task in tasks:
             task.cancel()
-        asyncio.ensure_future(self.stop_async_loop())
+        asyncio.ensure_future(self.stop_main_loop())
 
     async def updater(self, interval=1/20):
         try:
             LOG.debug("gui: updater enter")
             while True:
                 self.update()
+                if self.recording and self.mocap_recorder:
+                    self.mocap_elapsed_time.set(f"Elapsed time: {self.get_formatted_time()}")
+                    self.mocap_packet_number.set(f"Packets received: {self.get_formatted_packet_count()}")
+                else:
+                    self.mocap_elapsed_time.set("")
+                    self.mocap_packet_number.set("")
                 await asyncio.sleep(interval)
         finally:
             LOG.debug("gui: updater exit")
+    
+    def get_formatted_time(self):
+        elapsed_time = self.mocap_recorder.elapsed_time()
+        return time.strftime('%H:%M:%S', time.gmtime(elapsed_time))
+    
+    def get_formatted_packet_count(self):
+        packet_count = self.mocap_recorder.packet_count
+        if packet_count > 1e6:
+            millions = int(packet_count/1e6)
+            rem = packet_count%1e6
+            tens_thousands = int(rem/1e4)
+            formatted_count = "{}.{:02d}M".format(millions, tens_thousands)
+        elif packet_count > 1e3:
+            thousands = int(packet_count/1e3)
+            rem = packet_count%1e3
+            tens = int(rem/10)
+            formatted_count = "{}.{:02d}k".format(thousands, tens)
+        else:
+            formatted_count = str(packet_count)
+        return formatted_count
+        
+
 
     def choose_folder(self):
         folder_path = filedialog.askdirectory()
@@ -295,7 +324,6 @@ class App(tk.Frame):
             self.mocap_recorder = None
             LOG.error("Start attempt canceled")
         except mocap_recording.LinkError as err:
-            self.mocap_recorder = None
             err_msg = str(err)
         except Exception as ex:
             self.mocap_recorder = None
@@ -321,9 +349,9 @@ class App(tk.Frame):
         elif new_state == mocap_recording.State.WAITING:
             self.mocap_recording_status.set("Waiting on Motion Capture software")
         elif new_state == mocap_recording.State.STREAMING:
-            self.mocap_recording_status.set("Streaming")
+            self.mocap_recording_status.set("Motion Capture Data Streaming")
         elif new_state == mocap_recording.State.STOPPED:
-            self.mocap_recording_status.set("Stopped")
+            self.mocap_recording_status.set("Motion Capture Stream Stopped")
             
     def stop_recording(self):
         self.degree_entry.config(state='normal')
