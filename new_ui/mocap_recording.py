@@ -38,8 +38,8 @@ class MocapRecorder:
         self._on_state_changed = on_state_changed
         self._on_error = on_error
         self.starting_yaw = starting_yaw
-        self.samples = []
-        self.timestamps = []
+        self.samples = {}
+        self.timestamps = {}
         self.periodic_thread = None
 
         self.state = State.INITIAL
@@ -59,7 +59,7 @@ class MocapRecorder:
         self.lsl_outlet = None
         self.lsl_periodic_info = None
         self.lsl_periodic_outlet = None
-        self.samples = []
+        self.samples = {}
     
     def set_state(self, state):
         prev_state = self.state
@@ -213,19 +213,32 @@ class MocapRecorder:
                 packet = await self.receiver_queue.get()
                 if packet is None:
                     break
-                sample = qtm_packet_to_lsl_sample(packet)
-                if len(sample) != self.config.channel_count():
+                all_bodies_sample = qtm_packet_to_lsl_sample(self.config, packet)
+
+                length = 0
+                for test in all_bodies_sample.values():
+                    length += len(test)
+
+                if length != self.config.channel_count():
                     msg = ("Stream canceled: "
                         "sample length {} != channel count {}") \
-                        .format(len(sample), self.config.channel_count())
+                        .format(len(all_bodies_sample), self.config.channel_count())
                     LOG.error(msg)
                     self.err_disconnect(("Stream canceled: "
                         "QTM stream data inconsistent with LSL metadata"))
                 else:
                     self.packet_count += 1
-                    self.samples.append(sample)
-                    self.timestamps.append(self.get_formatted_timestamp())
-                    self.push_angle_triggers(sample)
+                    for body_name, data in all_bodies_sample.items():
+                        try:
+                            self.samples[body_name].append(data)
+                        except:
+                            self.samples[body_name] = []
+                            self.timestamps[body_name] = []
+                        
+                        self.samples[body_name].append(data)
+                        self.timestamps[body_name].append(self.get_formatted_timestamp())
+                        if "skate" in body_name:
+                            self.push_angle_triggers(data)
         except asyncio.CancelledError:
             raise
         except Exception as ex:
@@ -242,20 +255,22 @@ class MocapRecorder:
 
     def save_data(self, filepath):
         header = ['timestamp', 'x', 'y', 'z', 'roll', 'pitch', 'yaw']
-        with open(filepath, 'w', newline='') as file:
-            csv_writer = csv.writer(file)
-            csv_writer.writerow(header)
-            for timestamp, sample in zip(self.timestamps, self.samples):
-                # Zero yaw is defined along the x-axis, but in the room, we want it to be along the y-axis because of how
-                # the experiment is set up, so we add 90 degrees to all yaw measurements.
-                sample[-1] += 90
-                if sample[-1] >= 360:
-                    sample[-1] -= 360
-                csv_writer.writerow([timestamp] + sample)
+        for body_name in self.timestamps.keys():
+            with open(f"{filepath}_{body_name}.csv", 'w', newline='') as file:
+                csv_writer = csv.writer(file)
+                csv_writer.writerow(header)
+                for timestamp, sample in zip(self.timestamps[body_name], self.samples[body_name]):
+                    # Zero yaw is defined along the x-axis, but in the room, we want it to be along the y-axis because of how
+                    # the experiment is set up, so we add 90 degrees to all yaw measurements.
+                    #if "skate" in body_name:
+                    #    sample[-1] += 90
+                    #    if sample[-1] >= 360:
+                    #        sample[-1] -= 360
+                    csv_writer.writerow([timestamp] + sample)
         
-        nan_percentage = sum(math.isnan(sample) for sample in self.samples[0]) / len(self.samples[0])
-        if nan_percentage > 0.33:
-            LOG.warn("More than 30% of the motion capture data is lost. Consider rerecording this trial!")
+            nan_percentage = sum(math.isnan(sample[0]) for sample in self.samples[body_name]) / len(self.samples[body_name])
+            if nan_percentage > 0.33:
+                LOG.warn(f"More than 30% of the motion capture data for {body_name} is lost. Consider rerecording this trial!")
 
     
     def push_periodic_triggers(self):

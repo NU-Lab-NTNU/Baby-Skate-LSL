@@ -287,6 +287,9 @@ class App(tk.Frame):
 
         self.phase_description.set("Recording In Progress")
         self.target_folder = f"{self.parent_directory.get()}\\{datetime.now().strftime('%Y-%m-%d')}_{self.participant_name.get()}\\"
+        if not os.path.exists(self.target_folder):
+            os.makedirs(self.target_folder)
+
         num_of_files_in_folder = len(os.listdir(self.target_folder))
         # If for some reason the program was restarted after a few trials have been recorded,
         # we want the trial number to continue from where it stopped, not reset back to 1,
@@ -307,8 +310,6 @@ class App(tk.Frame):
         self.started_mocap_recording = asyncio.ensure_future(self._start_mocap_recording())
         self.recording = True
 
-        if not os.path.exists(self.target_folder):
-            os.makedirs(self.target_folder)
         self.cancel_button.grid_remove()
         self.start_recording_button.grid_remove()
         self.stop_recording_button = tk.Button(self.interactive_frame, text="STOP RECORDING", bg="darkred", fg="white", command=self.stop_recording)
@@ -365,7 +366,7 @@ class App(tk.Frame):
         self.continue_trial_button = tk.Button(self.interactive_frame, text="No, this was a bad trial. Record over it.", bg="darkred", fg="white", command=self.record_over_trial)
         self.continue_trial_button.grid(row=4, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
 
-        self.record_over_trial_button = tk.Button(self.interactive_frame, text="Yes, go to the next trial.", bg="darkgreen", fg="white", command=self.goto_new_trial)
+        self.record_over_trial_button = tk.Button(self.interactive_frame, text="Yes, keep this trial, and go to the next one.", bg="darkgreen", fg="white", command=self.goto_new_trial)
         self.record_over_trial_button.grid(row=5, column=0, columnspan=1, sticky="ew", padx=5, pady=5)
 
         self.recording = False
@@ -374,7 +375,7 @@ class App(tk.Frame):
             self.video_recorder = None
         
         if self.mocap_recorder:
-            asyncio.ensure_future(self.mocap_recorder.shutdown(self.target_folder + self.target_filename + '.xlsx'))
+            asyncio.ensure_future(self.mocap_recorder.shutdown(self.target_folder + self.target_filename))
     
     def goto_new_trial(self):
         self.continue_trial_button.grid_remove()

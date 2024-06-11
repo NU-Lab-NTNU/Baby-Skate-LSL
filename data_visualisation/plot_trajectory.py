@@ -67,7 +67,7 @@ def main():
     title_text = filepath.split('/')
     participant_name = title_text[-2].split('_')[-1]
     trial_number = title_text[-1].split('_')[1]
-    start_angle = title_text[-1].split('_')[-1].split('.')[0]
+    start_angle = title_text[-1].split('_')[3]
     ax.set_title(f"Trajectory for {participant_name}: Trial {trial_number}, Starting Angle {start_angle} degrees")
     ax.set_xlabel("Room Width [m]")
     ax.set_ylabel("Room Length [m]")

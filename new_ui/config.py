@@ -132,17 +132,18 @@ def mm_to_m(mm):
 # Changes in channel metadata should be reflected in qtm_packet_to_lsl_sample,
 # and vice versa. 
 
-def qtm_packet_to_lsl_sample(packet):
-    sample = []
+def qtm_packet_to_lsl_sample(config, packet):
+    sample = {}
     if QRTComponentType.Component6dEuler in packet.components:
         _, bodies = packet.get_6d_euler()
-        for position, rotation in bodies:
-            sample.append(mm_to_m(position.x))
-            sample.append(mm_to_m(position.y))
-            sample.append(mm_to_m(position.z))
-            sample.append(rotation.a1)
-            sample.append(rotation.a2)
-            sample.append(rotation.a3)
+        for body, (position, rotation) in enumerate(bodies):
+            sample[config.bodies()[body]['name']] = []
+            sample[config.bodies()[body]['name']].append(mm_to_m(position.x))
+            sample[config.bodies()[body]['name']].append(mm_to_m(position.y))
+            sample[config.bodies()[body]['name']].append(mm_to_m(position.z))
+            sample[config.bodies()[body]['name']].append(rotation.a1)
+            sample[config.bodies()[body]['name']].append(rotation.a2)
+            sample[config.bodies()[body]['name']].append(rotation.a3)
     return sample
 
 def new_lsl_stream_info(config, qtm_host, qtm_port):
